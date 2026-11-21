@@ -52,12 +52,16 @@ function display(jobId, clips) {
   });
   $('download-all').href = '/api/jobs/' + encodeURIComponent(jobId) + '/download/all_clips.zip';
   $('results').hidden = false;
-  $('results').scrollIntoView({behavior:'smooth'});
+  if (shownCount <= 1) $('results').scrollIntoView({behavior:'smooth'});
 }
 async function poll(jobId) {
   try {
     const job = await unpack(await fetch('/api/jobs/' + encodeURIComponent(jobId), {cache:'no-store'}));
-    progress(job.progress, job.status === 'done' ? 'Your clips are ready!' : job.message);
+    const ready = (job.clips || []).length;
+    const planned = job.planned_clips || 0;
+    const label = job.status === 'done' ? ('All ' + ready + ' available clips ready!') :
+      planned && ready ? (ready + ' of ' + planned + ' clips ready — processing continues') : job.message;
+    progress(job.progress, label);
     if (job.clips && job.clips.length > shownCount) {
       shownCount = job.clips.length;
       display(jobId, job.clips);
