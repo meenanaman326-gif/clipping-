@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-let source = 'youtube', timer = null, busy = false;
+let source = 'youtube', timer = null, busy = false, shownCount = 0;
 const linkTab = $('link-tab'), uploadTab = $('upload-tab');
 function selectTab(mode) {
   source = mode;
@@ -58,7 +58,17 @@ async function poll(jobId) {
   try {
     const job = await unpack(await fetch('/api/jobs/' + encodeURIComponent(jobId), {cache:'no-store'}));
     progress(job.progress, job.status === 'done' ? 'Your clips are ready!' : job.message);
-    if (job.status === 'done') {setBusy(false);display(jobId,job.clips);return;}
+    if (job.clips && job.clips.length > shownCount) {
+      shownCount = job.clips.length;
+      display(jobId, job.clips);
+      if (job.status !== 'done') $('download-all').hidden = true;
+    }
+    if (job.status === 'done') {
+      setBusy(false);
+      display(jobId,job.clips);
+      $('download-all').hidden = false;
+      return;
+    }
     if (job.status === 'error') throw new Error(job.message);
     timer = setTimeout(() => poll(jobId), 1700);
   } catch (err) {error(err.message);}
@@ -68,6 +78,7 @@ $('clip-form').onsubmit = async event => {
   if (busy) return;
   $('error').hidden = true;
   $('results').hidden = true;
+  shownCount = 0;
   if (!$('permission').checked) {error('Confirm that you have permission to process the video.');return;}
   if (source === 'youtube' && !$('youtube-url').value.trim()) {error('Paste a YouTube link first.');return;}
   const file = $('video-file').files[0];
