@@ -62,7 +62,8 @@ def worker():
             update(key, progress=30)
             clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message),
                                   lambda clip: append_clip(key, clip),
-                                  lambda count: update(key, planned_clips=count))
+                                  lambda count: update(key, planned_clips=count),
+                                  quality=job.get("quality", "balanced"))
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
         except ClipError as exc:
@@ -87,6 +88,13 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 class URLJob(BaseModel):
     url: str
     authorized: bool
+    quality: str = "balanced"
+
+
+def validate_quality(quality: str) -> str:
+    if quality not in ("fast", "balanced", "high"):
+        raise HTTPException(status_code=400, detail="Invalid output quality.")
+    return quality
 
 
 def new_job(mode: str, **extra):
@@ -121,19 +129,19 @@ def youtube_job(payload: URLJob):
         clean = youtube_video_url(payload.url)
     except ClipError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    key = new_job("youtube", url=clean)
+    key = new_job("youtube", url=clean, quality=validate_quality(payload.quality))
     Q.put_nowait(key)
     return {"job_id": key}
 
 
 @app.post("/api/jobs/upload")
-async def upload_job(file: UploadFile = File(...), authorized: bool = Form(False)):
+async def upload_job(file: UploadFile = File(...), authorized: bool = Form(False), quality: str = Form("balanced")):
     if not authorized:
         raise HTTPException(status_code=400, detail="Confirm you own or have permission to process this video.")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm"}:
         raise HTTPException(status_code=400, detail="Upload MP4, MOV, MKV, or WebM video.")
-    key = new_job("upload", source_name="source" + suffix)
+    key = new_job("upload", source_name="source" + suffix, quality=validate_quality(quality))
     target = ROOT / key / ("source" + suffix)
     size = 0
     try:
