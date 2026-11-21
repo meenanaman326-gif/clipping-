@@ -13,6 +13,7 @@
 <form id="clip-form">
 <div id="link-pane"><label for="youtube-url">YOUTUBE VIDEO URL</label><input id="youtube-url" type="url" placeholder="https://youtube.com/watch?v=..." autocomplete="url"><p class="hint">YouTube import is best-effort. Some links may be blocked by YouTube.</p></div>
 <div id="upload-pane" hidden><label for="video-file">CHOOSE YOUR VIDEO FILE</label><input id="video-file" type="file" accept=".mp4,.mov,.mkv,.webm,video/*"><p class="hint">MP4, MOV, MKV, WebM • Up to 200 MB • Maximum 25 minutes</p></div>
+<div class="quality-options"><label for="quality">OUTPUT QUALITY</label><select id="quality" name="quality"><option value="balanced" selected>Balanced — Clear HD 720p (recommended)</option><option value="high">High Quality — Full HD 1080p (slower)</option><option value="fast">Fast Preview — 480p (lower quality)</option></select><p class="hint">Higher quality takes longer. Video clarity cannot exceed the original upload.</p></div>
 <label class="permission"><input type="checkbox" id="permission" required><span>I own this video or have permission to process it.</span></label>
 <button type="submit" id="create-btn" class="primary">✦ Generate my clips →</button>
 </form>
