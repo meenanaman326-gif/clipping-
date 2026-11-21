@@ -1,5 +1,6 @@
 """Independent video highlight processing: not copied from HypeCut."""
 import json
+import math
 import os
 import re
 import subprocess
@@ -12,7 +13,7 @@ import numpy as np
 MAX_SECONDS = int(os.getenv("MAX_VIDEO_SECONDS", "1500"))
 MAX_DOWNLOAD_MB = int(os.getenv("MAX_DOWNLOAD_MB", "250"))
 CLIP_LENGTH = int(os.getenv("CLIP_LENGTH_SECONDS", "30"))
-CLIP_COUNT = int(os.getenv("CLIP_COUNT", "3"))
+CLIP_COUNT = int(os.getenv("CLIP_COUNT", "5"))
 
 
 class ClipError(Exception):
@@ -99,6 +100,7 @@ def acquire_video(url, folder):
 def highlight_windows(video, duration):
     """Fast, CPU-only heuristic: energetic changes and varied sound, not semantic understanding."""
     length = min(CLIP_LENGTH, max(8, int(duration)))
+    target_clips = min(max(1, CLIP_COUNT), max(1, math.ceil(duration / 95)))
     if duration < length + 4:
         return [(0., length, 0.)]
     sample_rate = 2000
@@ -130,7 +132,7 @@ def highlight_windows(video, duration):
         candidates = [(float(i), float(scores[i])) for i in np.argsort(scores)[::-1]]
     except (ValueError, OSError, subprocess.SubprocessError):
         candidates = [(max(0., duration * (j + 1) / (CLIP_COUNT + 1) - length / 2), 0.)
-                      for j in range(CLIP_COUNT)]
+                      for j in range(target_clips)]
 
     selected = []
     separation = max(12, length * 0.85)
@@ -138,7 +140,7 @@ def highlight_windows(video, duration):
         start = min(start, max(0., duration - length))
         if all(abs(start - earlier[0]) >= separation for earlier in selected):
             selected.append((start, length, score))
-        if len(selected) >= CLIP_COUNT:
+        if len(selected) >= target_clips:
             break
     if not selected:
         selected = [(0., length, 0.)]
@@ -168,15 +170,23 @@ def render_clip(video, start, seconds, target):
 
 
 
-def process_video(path, folder, progress, on_clip=None):
+def process_video(path, folder, progress, on_clip=None, on_plan=None):
     progress(35, "Finding energetic moments and sound changes")
     duration = probe(path)
     windows = highlight_windows(path, duration)
+    if on_plan:
+        on_plan(len(windows))
     clips = []
+    failed = 0
     for n, (start, seconds, score) in enumerate(windows, 1):
         progress(35 + int(60 * (n - 1) / len(windows)), f"Rendering clip {n} of {len(windows)}")
         name = f"clip_{n:02d}.mp4"
-        render_clip(path, start, seconds, folder / name)
+        try:
+            render_clip(path, start, seconds, folder / name)
+        except ClipError:
+            failed += 1
+            progress(35 + int(60 * n / len(windows)), f"Could not render candidate {n}; continuing")
+            continue
         clip = {"name": name, "start": round(start, 1),
                 "duration": seconds, "score": round(score, 2)}
         clips.append(clip)
@@ -184,6 +194,8 @@ def process_video(path, folder, progress, on_clip=None):
             on_clip(clip)
         progress(35 + int(60 * n / len(windows)),
                  f"Clip {n} ready — {len(windows) - n} more to render")
+    if not clips:
+        raise ClipError("No clips could be rendered. Try another MP4 video.")
     progress(98, "Preparing download ZIP")
     with zipfile.ZipFile(folder / "all_clips.zip", "w", zipfile.ZIP_STORED) as archive:
         for clip in clips:
