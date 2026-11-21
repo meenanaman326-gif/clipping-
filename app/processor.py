@@ -97,56 +97,79 @@ def acquire_video(url, folder):
 
 
 def highlight_windows(video, duration):
+    """Fast, CPU-only heuristic: energetic changes and varied sound, not semantic understanding."""
     length = min(CLIP_LENGTH, max(8, int(duration)))
-    if duration < length + 5:
+    if duration < length + 4:
         return [(0., length, 0.)]
-    sample_rate = 4000
+    sample_rate = 2000
+    candidates = []
     try:
-        cp = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-i", str(video), "-vn", "-ac", "1", "-ar", str(sample_rate),
-            "-f", "s16le", "pipe:1"], capture_output=True,
-            timeout=max(45, min(240, int(duration * 0.8))))
-        samples = np.frombuffer(cp.stdout, dtype=np.int16).astype(np.float32)
-        whole = len(samples) // sample_rate
-        if cp.returncode or whole < 5:
-            raise ValueError("No audio")
-        rms = np.sqrt(np.mean(samples[:whole * sample_rate].reshape(-1, sample_rate) ** 2, axis=1))
-        loud = np.log1p(rms)
-        variation = np.abs(np.diff(loud, prepend=loud[0]))
-        energy = loud * 0.45 + variation * 1.8
-        scores = np.convolve(energy, np.ones(length) / length, mode="valid")
+        cp = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-threads", "1",
+             "-i", str(video), "-vn", "-ac", "1", "-ar", str(sample_rate),
+             "-f", "s16le", "pipe:1"], capture_output=True,
+            timeout=max(35, min(180, int(duration * 0.5) + 20)))
+        samples = np.frombuffer(cp.stdout, dtype=np.int16)
+        seconds = len(samples) // sample_rate
+        if cp.returncode != 0 or seconds < length:
+            raise ValueError("No usable audio track")
+        # Compute one amplitude measurement per second; decoding is just 2 kHz mono.
+        frames = samples[:seconds * sample_rate].reshape(seconds, sample_rate)
+        signal = frames.astype(np.float32) / 32768.0
+        rms = np.sqrt(np.mean(signal * signal, axis=1))
+        loudness = np.log1p(rms * 40.0)
+        local_mean = np.convolve(loudness, np.ones(9) / 9, mode="same")
+        # Prefer changes, reactions and bursts over consistently loud music.
+        bursts = np.maximum(0.0, loudness - local_mean)
+        changes = np.abs(np.diff(loudness, prepend=loudness[0]))
+        activity = 0.15 * loudness + 1.8 * bursts + 1.15 * changes
+        activity = np.convolve(activity, np.ones(3) / 3, mode="same")
+        count = max(1, seconds - length + 1)
+        # Rolling mean is efficient and helps choose a full, usable video section.
+        scores = np.convolve(activity, np.ones(length) / length, mode="valid")[:count]
         candidates = [(float(i), float(scores[i])) for i in np.argsort(scores)[::-1]]
     except (ValueError, OSError, subprocess.SubprocessError):
         candidates = [(max(0., duration * (j + 1) / (CLIP_COUNT + 1) - length / 2), 0.)
                       for j in range(CLIP_COUNT)]
-    result = []
+
+    selected = []
+    separation = max(12, length * 0.85)
     for start, score in candidates:
         start = min(start, max(0., duration - length))
-        if all(abs(start - prior[0]) >= max(length + 8, 35) for prior in result):
-            result.append((start, length, score))
-        if len(result) >= CLIP_COUNT:
+        if all(abs(start - earlier[0]) >= separation for earlier in selected):
+            selected.append((start, length, score))
+        if len(selected) >= CLIP_COUNT:
             break
-    return sorted(result or [(0., length, 0.)])
+    if not selected:
+        selected = [(0., length, 0.)]
+    # Rank strongest highlights first so the best candidate can download first.
+    return selected
 
 
 def render_clip(video, start, seconds, target):
-    filters = ("[0:v]split=2[b][f];"
-               "[b]scale=720:1280:force_original_aspect_ratio=increase,"
-               "crop=720:1280,boxblur=20:2[bg];"
-               "[f]scale=720:1280:force_original_aspect_ratio=decrease[fg];"
-               "[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p[v]")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}",
-           "-i", str(video), "-t", f"{seconds:.2f}", "-filter_complex", filters,
-           "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast",
-           "-crf", "27", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+    """Speed-first render: 480x854, 24fps and no expensive full-frame blur."""
+    filters = ("scale=480:854:force_original_aspect_ratio=decrease:flags=fast_bilinear,"
+               "pad=480:854:(ow-iw)/2:(oh-ih)/2:color=0x171b29,"
+               "fps=24,format=yuv420p")
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+           "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{seconds:.2f}",
+           "-map", "0:v:0", "-map", "0:a?", "-vf", filters,
+           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+           "-threads", "2", "-c:a", "aac", "-b:a", "96k",
            "-movflags", "+faststart", str(target)]
-    cp = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired as exc:
+        target.unlink(missing_ok=True)
+        raise ClipError("Rendering timed out. Try a shorter or smaller video.") from exc
     if cp.returncode or not target.is_file() or target.stat().st_size == 0:
-        raise ClipError("Video rendering failed. Try another MP4.")
+        target.unlink(missing_ok=True)
+        raise ClipError("Video rendering failed. Try an MP4 with H.264 video.")
 
 
-def process_video(path, folder, progress):
-    progress(35, "Selecting energetic video moments")
+
+def process_video(path, folder, progress, on_clip=None):
+    progress(35, "Finding energetic moments and sound changes")
     duration = probe(path)
     windows = highlight_windows(path, duration)
     clips = []
@@ -154,10 +177,15 @@ def process_video(path, folder, progress):
         progress(35 + int(60 * (n - 1) / len(windows)), f"Rendering clip {n} of {len(windows)}")
         name = f"clip_{n:02d}.mp4"
         render_clip(path, start, seconds, folder / name)
-        clips.append({"name": name, "start": round(start, 1),
-                      "duration": seconds, "score": round(score, 2)})
+        clip = {"name": name, "start": round(start, 1),
+                "duration": seconds, "score": round(score, 2)}
+        clips.append(clip)
+        if on_clip:
+            on_clip(clip)
+        progress(35 + int(60 * n / len(windows)),
+                 f"Clip {n} ready — {len(windows) - n} more to render")
     progress(98, "Preparing download ZIP")
-    with zipfile.ZipFile(folder / "all_clips.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(folder / "all_clips.zip", "w", zipfile.ZIP_STORED) as archive:
         for clip in clips:
             archive.write(folder / clip["name"], clip["name"])
     return clips
