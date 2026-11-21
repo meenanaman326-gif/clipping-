@@ -41,6 +41,12 @@ def update(key: str, **fields):
             JOBS[key].update(fields)
 
 
+def append_clip(key: str, clip: dict):
+    with LOCK:
+        if key in JOBS:
+            JOBS[key]["clips"].append(clip)
+
+
 def worker():
     while True:
         key = Q.get()
@@ -54,7 +60,8 @@ def worker():
             else:
                 source = folder / job["source_name"]
             update(key, progress=30)
-            clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message))
+            clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message),
+                                  lambda clip: append_clip(key, clip))
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
         except ClipError as exc:
@@ -162,7 +169,7 @@ def download(job_id: str, filename: str):
     with LOCK:
         job = JOBS.get(job_id)
         ready = bool(job and job["status"] == "done")
-    if not ready or (filename != "all_clips.zip" and filename not in {clip["name"] for clip in job["clips"]}):
+    if not job or (filename == "all_clips.zip" and not ready) or (filename != "all_clips.zip" and filename not in {clip["name"] for clip in job["clips"]}):
         raise HTTPException(status_code=404, detail="Clip not available.")
     target = ROOT / job_id / filename
     if not target.is_file():
