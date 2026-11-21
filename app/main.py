@@ -61,7 +61,8 @@ def worker():
                 source = folder / job["source_name"]
             update(key, progress=30)
             clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message),
-                                  lambda clip: append_clip(key, clip))
+                                  lambda clip: append_clip(key, clip),
+                                  lambda count: update(key, planned_clips=count))
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
         except ClipError as exc:
@@ -98,7 +99,7 @@ def new_job(mode: str, **extra):
     (ROOT / key).mkdir(parents=True)
     with LOCK:
         JOBS[key] = {"id": key, "mode": mode, "created": time.time(), "status": "queued",
-                     "progress": 0, "message": "Waiting in queue", "clips": [], **extra}
+                     "progress": 0, "message": "Waiting in queue", "clips": [], "planned_clips": 0, **extra}
     return key
 
 
@@ -161,7 +162,7 @@ def job_status(job_id: str):
         job = dict(JOBS.get(job_id, {}))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found or expired.")
-    return {k: v for k, v in job.items() if k in {"id", "status", "progress", "message", "clips"}}
+    return {k: v for k, v in job.items() if k in {"id", "status", "progress", "message", "clips", "planned_clips"}}
 
 
 @app.get("/api/jobs/{job_id}/download/{filename}")
