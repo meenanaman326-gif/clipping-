@@ -148,29 +148,41 @@ def highlight_windows(video, duration):
     return selected
 
 
-def render_clip(video, start, seconds, target):
-    """Speed-first render: 480x854, 24fps and no expensive full-frame blur."""
-    filters = ("scale=480:854:force_original_aspect_ratio=decrease:flags=fast_bilinear,"
-               "pad=480:854:(ow-iw)/2:(oh-ih)/2:color=0x171b29,"
-               "fps=24,format=yuv420p")
+
+def render_clip(video, start, seconds, target, quality="balanced"):
+    """Render with user-selectable output quality while preserving aspect ratio."""
+    presets = {
+        "fast":     (480, 854, "ultrafast", 25, "96k", "fast_bilinear", 24),
+        "balanced": (720, 1280, "veryfast", 20, "160k", "bicubic", 30),
+        "high":     (1080, 1920, "veryfast", 18, "192k", "lanczos", 30),
+    }
+    if quality not in presets:
+        raise ClipError("Unsupported output quality.")
+    width, height, preset, crf, audio_rate, scale_algorithm, fps = presets[quality]
+    filters = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease:"
+        f"flags={scale_algorithm},"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x171b29,"
+        f"fps={fps},format=yuv420p"
+    )
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
            "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{seconds:.2f}",
            "-map", "0:v:0", "-map", "0:a?", "-vf", filters,
-           "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-           "-threads", "2", "-c:a", "aac", "-b:a", "96k",
+           "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+           "-threads", "2", "-c:a", "aac", "-b:a", audio_rate,
            "-movflags", "+faststart", str(target)]
     try:
-        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        timeout = 360 if quality == "high" else 240
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         target.unlink(missing_ok=True)
-        raise ClipError("Rendering timed out. Try a shorter or smaller video.") from exc
+        raise ClipError("Rendering timed out. Try Balanced quality or a shorter video.") from exc
     if cp.returncode or not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise ClipError("Video rendering failed. Try an MP4 with H.264 video.")
 
 
-
-def process_video(path, folder, progress, on_clip=None, on_plan=None):
+def process_video(path, folder, progress, on_clip=None, on_plan=None, quality="balanced"):
     progress(35, "Finding energetic moments and sound changes")
     duration = probe(path)
     windows = highlight_windows(path, duration)
@@ -182,7 +194,7 @@ def process_video(path, folder, progress, on_clip=None, on_plan=None):
         progress(35 + int(60 * (n - 1) / len(windows)), f"Rendering clip {n} of {len(windows)}")
         name = f"clip_{n:02d}.mp4"
         try:
-            render_clip(path, start, seconds, folder / name)
+            render_clip(path, start, seconds, folder / name, quality=quality)
         except ClipError:
             failed += 1
             progress(35 + int(60 * n / len(windows)), f"Could not render candidate {n}; continuing")
