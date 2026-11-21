@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0d19"><title>ClipForge · Create shorts from videos</title>
+<link rel="stylesheet" href="/static/styles.css"></head>
+<body>
+<header class="wrap top"><a class="logo" href="/">✦ ClipForge<span>.</span></a><small>FREE EXPERIMENTAL BETA</small></header>
+<main class="wrap">
+<section class="hero"><div class="kicker">✳ SMART VIDEO CLIPPING</div><h1>Long videos in.<br><em>Short clips out.</em></h1><p>Paste a supported YouTube link or upload your own video. Generate vertical highlights and download them right here in Chrome.</p></section>
+<section class="panel">
+<h2>Create your clips <span>01 / CREATE</span></h2>
+<div class="tabs"><button id="link-tab" type="button" class="selected">▶ YouTube link</button><button id="upload-tab" type="button">⇧ Upload video</button></div>
+<form id="clip-form">
+<div id="link-pane"><label for="youtube-url">YOUTUBE VIDEO URL</label><input id="youtube-url" type="url" placeholder="https://youtube.com/watch?v=..." autocomplete="url"><p class="hint">YouTube import is best-effort. Some links may be blocked by YouTube.</p></div>
+<div id="upload-pane" hidden><label for="video-file">CHOOSE YOUR VIDEO FILE</label><input id="video-file" type="file" accept=".mp4,.mov,.mkv,.webm,video/*"><p class="hint">MP4, MOV, MKV, WebM • Up to 200 MB • Maximum 25 minutes</p></div>
+<label class="permission"><input type="checkbox" id="permission" required><span>I own this video or have permission to process it.</span></label>
+<button type="submit" id="create-btn" class="primary">✦ Generate my clips →</button>
+</form>
+<div id="status" hidden><div class="progress-title"><strong id="status-text">Preparing...</strong><span id="percent">0%</span></div><div class="track"><div id="bar"></div></div><p>Keep this page open while video processing finishes.</p></div>
+<div id="error" hidden role="alert"></div>
+</section>
+<section id="results" hidden><div class="result-head"><div><div class="kicker">02 / YOUR CLIPS</div><h2>Fresh from the cut.</h2></div><a id="download-all">↓ Download ZIP</a></div><div id="clips"></div><p class="hint">This beta selects moments by audio energy, not true AI understanding. Review clips before posting.</p></section>
+<section class="steps"><article><b>01</b><h3>Paste or upload</h3><p>Add a supported YouTube link or upload an authorized video.</p></article><article><b>02</b><h3>Analyze highlights</h3><p>Audio scoring finds energetic parts of the video.</p></article><article><b>03</b><h3>Download MP4</h3><p>Get your 9:16 clips for Shorts and Reels.</p></article></section>
+</main>
+<footer class="wrap">© 2026 ClipForge. Independent experimental project. Not affiliated with YouTube or HypeCut.</footer>
+<script src="/static/app.js" defer></script></body></html>
