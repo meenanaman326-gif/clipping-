@@ -1,5 +1,5 @@
 # Deno is used by yt-dlp for YouTube's JavaScript player challenge solver.
-FROM denoland/deno:bin-2.9.8 AS deno
+FROM denoland/deno:bin AS deno
 
 FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
