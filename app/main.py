@@ -88,7 +88,6 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 
 class URLJob(BaseModel):
     url: str
-    authorized: bool
     quality: str = "balanced"
     analysis_mode: str = "fast"
 
@@ -131,8 +130,6 @@ def health():
 
 @app.post("/api/jobs/youtube")
 def youtube_job(payload: URLJob):
-    if not payload.authorized:
-        raise HTTPException(status_code=400, detail="Confirm that you own or have permission to process this video.")
     try:
         clean = youtube_video_url(payload.url)
     except ClipError as exc:
@@ -144,9 +141,7 @@ def youtube_job(payload: URLJob):
 
 
 @app.post("/api/jobs/upload")
-async def upload_job(file: UploadFile = File(...), authorized: bool = Form(False), quality: str = Form("balanced"), analysis_mode: str = Form("fast")):
-    if not authorized:
-        raise HTTPException(status_code=400, detail="Confirm you own or have permission to process this video.")
+async def upload_job(file: UploadFile = File(...), quality: str = Form("balanced"), analysis_mode: str = Form("fast")):
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm"}:
         raise HTTPException(status_code=400, detail="Upload MP4, MOV, MKV, or WebM video.")
