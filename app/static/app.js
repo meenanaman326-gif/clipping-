@@ -96,10 +96,10 @@ $('clip-form').onsubmit = async event => {
     if (source === 'youtube') {
       response = await fetch('/api/jobs/youtube', {
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({url:$('youtube-url').value.trim(),authorized:true,quality:$('quality').value})
+        body:JSON.stringify({url:$('youtube-url').value.trim(),authorized:true,quality:$('quality').value,analysis_mode:$('analysis-mode').value})
       });
     } else {
-      const form = new FormData();form.append('file',file);form.append('authorized','true');form.append('quality',$('quality').value);
+      const form = new FormData();form.append('file',file);form.append('authorized','true');form.append('quality',$('quality').value);form.append('analysis_mode',$('analysis-mode').value);
       response = await fetch('/api/jobs/upload',{method:'POST',body:form});
     }
     const job = await unpack(response);
