@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from .processor import ClipError, acquire_video, process_video, youtube_video_url
+from .live import LiveError, capture_live, validate_live_url
 
 ROOT = Path(os.getenv("WORK_DIR", "/tmp/clipforge-jobs"))
 ROOT.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,12 @@ def worker():
             with LOCK:
                 job = dict(JOBS[key])
             folder = ROOT / key
-            if job["mode"] == "youtube":
+            if job["mode"] == "live":
+                update(key, status="processing", progress=8, message="Connecting to live stream")
+                source = capture_live(job["url"], folder,
+                                      lambda progress, message: update(key, progress=progress, message=message),
+                                      seconds=job.get("capture_seconds", 120))
+            elif job["mode"] == "youtube":
                 update(key, status="processing", progress=8, message="Connecting to YouTube and checking video availability")
                 source = acquire_video(job["url"], folder,
                                        lambda progress, message: update(key, progress=progress, message=message))
@@ -69,7 +75,7 @@ def worker():
                                   mode=job.get("analysis_mode", "fast"))
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
-        except ClipError as exc:
+        except (ClipError, LiveError) as exc:
             update(key, status="error", message=str(exc), progress=0)
         except Exception:
             update(key, status="error", message="Processing failed. Try a shorter MP4 video.", progress=0)
@@ -137,6 +143,28 @@ def youtube_job(payload: URLJob):
     except ClipError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     key = new_job("youtube", url=clean, quality=validate_quality(payload.quality),
+                  analysis_mode=validate_analysis_mode(payload.analysis_mode))
+    Q.put_nowait(key)
+    return {"job_id": key}
+
+
+class LiveJob(BaseModel):
+    url: str
+    capture_seconds: int = 120
+    quality: str = "balanced"
+    analysis_mode: str = "fast"
+
+
+@app.post("/api/jobs/live")
+def live_job(payload: LiveJob):
+    try:
+        clean = validate_live_url(payload.url)
+    except LiveError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if payload.capture_seconds not in (60, 120, 180):
+        raise HTTPException(status_code=400, detail="Choose 60, 120 or 180 seconds.")
+    key = new_job("live", url=clean, capture_seconds=payload.capture_seconds,
+                  quality=validate_quality(payload.quality),
                   analysis_mode=validate_analysis_mode(payload.analysis_mode))
     Q.put_nowait(key)
     return {"job_id": key}
