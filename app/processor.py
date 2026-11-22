@@ -56,9 +56,11 @@ def probe(path):
     return seconds
 
 
-def acquire_video(url, folder):
+def acquire_video(url, folder, on_progress=None):
     import yt_dlp
     canonical = youtube_video_url(url)
+    if on_progress:
+        on_progress(9, "YouTube is checking available video formats")
     limit = MAX_DOWNLOAD_MB * 1024 * 1024
 
     def filter_video(info, *, incomplete=False):
@@ -73,22 +75,31 @@ def acquire_video(url, folder):
         return None
 
     def progress(data):
-        if data.get("status") == "downloading" and data.get("downloaded_bytes", 0) > limit:
-            raise ClipError("Video exceeds download limit.")
+        if data.get("status") == "downloading":
+            downloaded = data.get("downloaded_bytes", 0)
+            if downloaded > limit:
+                raise ClipError("Video exceeds download limit.")
+            total = data.get("total_bytes") or data.get("total_bytes_estimate")
+            if on_progress:
+                percentage = min(28, 12 + int(16 * downloaded / total)) if total else 17
+                on_progress(percentage, "Downloading video from YouTube" +
+                            (f" ({int(100 * downloaded / total)}%)" if total else ""))
+        elif data.get("status") == "finished" and on_progress:
+            on_progress(28, "Downloaded video; preparing clip analysis")
 
     options = {
         "format": "best[height<=720][ext=mp4]/best[height<=720]/best",
         "outtmpl": str(folder / "source.%(ext)s"),
         "noplaylist": True, "match_filter": filter_video,
         "progress_hooks": [progress], "quiet": True, "no_warnings": True,
-        "socket_timeout": 20, "retries": 1, "fragment_retries": 1,
+        "socket_timeout": 12, "retries": 0, "extractor_retries": 0, "fragment_retries": 0,
         "max_filesize": limit
     }
     try:
         with yt_dlp.YoutubeDL(options) as downloader:
             downloader.download([canonical])
     except Exception as exc:
-        raise ClipError("YouTube import failed. Try uploading an authorized video file.") from exc
+        raise ClipError("YouTube import failed at source extraction. This link cannot be processed by the server right now; try uploading the original MP4.") from exc
     files = [f for f in folder.glob("source.*") if f.is_file() and not f.name.endswith((".part", ".ytdl"))]
     if not files:
         raise ClipError("No video could be imported.")
