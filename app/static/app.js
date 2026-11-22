@@ -90,7 +90,7 @@ $('clip-form').onsubmit = async event => {
   if (source === 'live' && !$('live-url').value.trim()) {error('Paste a public live-stream link first.');return;}
   const file = $('video-file').files[0];
   if (source === 'upload' && !file) {error('Choose a video file first.');return;}
-  if (source === 'upload' && file.size > 200 * 1024 * 1024) {error('Maximum file size is 200 MB.');return;}
+  if (source === 'upload' && file.size > 500 * 1024 * 1024) {error('Maximum file size is 500 MB.');return;}
   if (timer) clearTimeout(timer);
   setBusy(true);
   progress(2,source === 'youtube' ? 'Checking YouTube link…' : source === 'live' ? 'Connecting to live stream…' : 'Uploading video…');
@@ -107,8 +107,32 @@ $('clip-form').onsubmit = async event => {
         body: JSON.stringify({url:$('live-url').value.trim(),capture_seconds:Number($('capture-seconds').value),quality:$('quality').value,analysis_mode:$('analysis-mode').value})
       });
     } else {
-      const form = new FormData();form.append('file',file);form.append('quality',$('quality').value);form.append('analysis_mode',$('analysis-mode').value);
-      response = await fetch('/api/jobs/upload',{method:'POST',body:form});
+      const initiated = await unpack(await fetch('/api/jobs/upload/start', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({filename:file.name,size:file.size,quality:$('quality').value,analysis_mode:$('analysis-mode').value})
+      }));
+      const chunkSize = initiated.chunk_size || 4 * 1024 * 1024;
+      let uploaded = 0;
+      for (let index = 0; uploaded < file.size; index++) {
+        const end = Math.min(file.size, uploaded + chunkSize);
+        const body = file.slice(uploaded, end);
+        let result;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            result = await unpack(await fetch('/api/jobs/upload/' + encodeURIComponent(initiated.job_id) + '/chunk?index=' + index, {
+              method:'PUT', headers:{'Content-Type':'application/octet-stream'}, body
+            }));
+            break;
+          } catch (err) {
+            if (attempt === 2) throw new Error('Upload interrupted. Check your connection and retry. ' + err.message);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+        if (result.received !== end) throw new Error('Server returned unexpected upload offset. Please retry.');
+        uploaded = end;
+        progress(Math.round(5 + 20 * uploaded / file.size), 'Uploading video: ' + Math.round(100 * uploaded / file.size) + '%');
+      }
+      response = await fetch('/api/jobs/upload/' + encodeURIComponent(initiated.job_id) + '/finish', {method:'POST'});
     }
     const job = await unpack(response);
     await poll(job.job_id);
