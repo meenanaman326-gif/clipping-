@@ -63,7 +63,8 @@ def worker():
             clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message),
                                   lambda clip: append_clip(key, clip),
                                   lambda count: update(key, planned_clips=count),
-                                  quality=job.get("quality", "balanced"))
+                                  quality=job.get("quality", "balanced"),
+                                  mode=job.get("analysis_mode", "fast"))
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
         except ClipError as exc:
@@ -89,6 +90,13 @@ class URLJob(BaseModel):
     url: str
     authorized: bool
     quality: str = "balanced"
+    analysis_mode: str = "fast"
+
+
+def validate_analysis_mode(mode: str) -> str:
+    if mode not in ("fast", "deep"):
+        raise HTTPException(status_code=400, detail="Invalid highlight mode.")
+    return mode
 
 
 def validate_quality(quality: str) -> str:
@@ -129,19 +137,21 @@ def youtube_job(payload: URLJob):
         clean = youtube_video_url(payload.url)
     except ClipError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    key = new_job("youtube", url=clean, quality=validate_quality(payload.quality))
+    key = new_job("youtube", url=clean, quality=validate_quality(payload.quality),
+                  analysis_mode=validate_analysis_mode(payload.analysis_mode))
     Q.put_nowait(key)
     return {"job_id": key}
 
 
 @app.post("/api/jobs/upload")
-async def upload_job(file: UploadFile = File(...), authorized: bool = Form(False), quality: str = Form("balanced")):
+async def upload_job(file: UploadFile = File(...), authorized: bool = Form(False), quality: str = Form("balanced"), analysis_mode: str = Form("fast")):
     if not authorized:
         raise HTTPException(status_code=400, detail="Confirm you own or have permission to process this video.")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".mp4", ".mov", ".mkv", ".webm"}:
         raise HTTPException(status_code=400, detail="Upload MP4, MOV, MKV, or WebM video.")
-    key = new_job("upload", source_name="source" + suffix, quality=validate_quality(quality))
+    key = new_job("upload", source_name="source" + suffix, quality=validate_quality(quality),
+                  analysis_mode=validate_analysis_mode(analysis_mode))
     target = ROOT / key / ("source" + suffix)
     size = 0
     try:
