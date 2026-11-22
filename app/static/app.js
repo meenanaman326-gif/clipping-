@@ -1,16 +1,19 @@
 const $ = id => document.getElementById(id);
 let source = 'youtube', timer = null, busy = false, shownCount = 0;
-const linkTab = $('link-tab'), uploadTab = $('upload-tab');
+const linkTab = $('link-tab'), uploadTab = $('upload-tab'), liveTab = $('live-tab');
 function selectTab(mode) {
   source = mode;
   linkTab.classList.toggle('selected', mode === 'youtube');
   uploadTab.classList.toggle('selected', mode === 'upload');
+  liveTab.classList.toggle('selected', mode === 'live');
   $('link-pane').hidden = mode !== 'youtube';
   $('upload-pane').hidden = mode !== 'upload';
+  $('live-pane').hidden = mode !== 'live';
   $('error').hidden = true;
 }
 linkTab.onclick = () => selectTab('youtube');
 uploadTab.onclick = () => selectTab('upload');
+liveTab.onclick = () => selectTab('live');
 function error(message) {
   $('status').hidden = true;
   $('error').textContent = message;
@@ -84,18 +87,24 @@ $('clip-form').onsubmit = async event => {
   $('results').hidden = true;
   shownCount = 0;
   if (source === 'youtube' && !$('youtube-url').value.trim()) {error('Paste a YouTube link first.');return;}
+  if (source === 'live' && !$('live-url').value.trim()) {error('Paste a public live-stream link first.');return;}
   const file = $('video-file').files[0];
   if (source === 'upload' && !file) {error('Choose a video file first.');return;}
   if (source === 'upload' && file.size > 200 * 1024 * 1024) {error('Maximum file size is 200 MB.');return;}
   if (timer) clearTimeout(timer);
   setBusy(true);
-  progress(2,source === 'youtube' ? 'Checking YouTube link…' : 'Uploading video…');
+  progress(2,source === 'youtube' ? 'Checking YouTube link…' : source === 'live' ? 'Connecting to live stream…' : 'Uploading video…');
   try {
     let response;
     if (source === 'youtube') {
       response = await fetch('/api/jobs/youtube', {
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({url:$('youtube-url').value.trim(),quality:$('quality').value,analysis_mode:$('analysis-mode').value})
+      });
+    } else if (source === 'live') {
+      response = await fetch('/api/jobs/live', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({url:$('live-url').value.trim(),capture_seconds:Number($('capture-seconds').value),quality:$('quality').value,analysis_mode:$('analysis-mode').value})
       });
     } else {
       const form = new FormData();form.append('file',file);form.append('quality',$('quality').value);form.append('analysis_mode',$('analysis-mode').value);
