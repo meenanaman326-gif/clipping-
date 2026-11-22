@@ -108,9 +108,9 @@ def acquire_video(url, folder, on_progress=None):
     return path
 
 
-def highlight_windows(video, duration, mode='fast'):
+def highlight_windows(video, duration, mode='fast', clip_length=None):
     """Fast, CPU-only heuristic: energetic changes and varied sound, not semantic understanding."""
-    length = min(CLIP_LENGTH, max(8, int(duration)))
+    length = min(clip_length or CLIP_LENGTH, max(8, int(duration)))
     target_clips = min(max(1, CLIP_COUNT), max(1, math.ceil(duration / 95)))
     if duration < length + 4:
         return [(0., length, 0.)]
@@ -179,9 +179,10 @@ def highlight_windows(video, duration, mode='fast'):
 def render_clip(video, start, seconds, target, quality="balanced"):
     """Render with user-selectable output quality while preserving aspect ratio."""
     presets = {
-        "fast":     (480, 854, "ultrafast", 25, "96k", "fast_bilinear", 24),
-        "balanced": (720, 1280, "veryfast", 20, "160k", "bicubic", 30),
-        "high":     (1080, 1920, "veryfast", 18, "192k", "lanczos", 30),
+        # Turbo limits pixel count, frames and duration; preserves 9:16 output.
+        "fast":     (480, 854, "ultrafast", 26, "96k", "fast_bilinear", 20),
+        "balanced": (720, 1280, "ultrafast", 23, "128k", "fast_bilinear", 24),
+        "high":     (1080, 1920, "superfast", 20, "160k", "bicubic", 24),
     }
     if quality not in presets:
         raise ClipError("Unsupported output quality.")
@@ -192,7 +193,7 @@ def render_clip(video, start, seconds, target, quality="balanced"):
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x171b29,"
         f"fps={fps},format=yuv420p"
     )
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
            "-ss", f"{start:.2f}", "-i", str(video), "-t", f"{seconds:.2f}",
            "-map", "0:v:0", "-map", "0:a?", "-vf", filters,
            "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
@@ -212,13 +213,16 @@ def render_clip(video, start, seconds, target, quality="balanced"):
 def process_video(path, folder, progress, on_clip=None, on_plan=None, quality="balanced", mode="fast"):
     progress(35, "Scanning audio and scene activity" if mode == "deep" else "Scanning audio peaks and vocal reactions")
     duration = probe(path)
-    windows = highlight_windows(path, duration, mode=mode)
+    windows = highlight_windows(path, duration, mode=mode,
+                               clip_length=20 if quality == "fast" else None)
     if on_plan:
         on_plan(len(windows))
     clips = []
     failed = 0
     for n, (start, seconds, score) in enumerate(windows, 1):
-        progress(35 + int(60 * (n - 1) / len(windows)), f"Rendering clip {n} of {len(windows)}")
+        progress(35 + int(60 * (n - 1) / len(windows)),
+                 f"Rendering clip {n} of {len(windows)} — {int(seconds)}s at "
+                 + ("480p Turbo" if quality == "fast" else "720p" if quality == "balanced" else "1080p"))
         name = f"clip_{n:02d}.mp4"
         try:
             render_clip(path, start, seconds, folder / name, quality=quality)
