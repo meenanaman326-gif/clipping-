@@ -9,6 +9,6 @@ WORKDIR /srv/app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && deno --version
 COPY app ./app
-ENV PORT=10000 MAX_VIDEO_SECONDS=1500 MAX_UPLOAD_MB=200 CLIP_COUNT=3
+ENV PORT=10000 MAX_VIDEO_SECONDS=1500 MAX_UPLOAD_MB=200 CLIP_COUNT=5
 EXPOSE 10000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
