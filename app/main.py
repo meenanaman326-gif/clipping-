@@ -1,6 +1,7 @@
 """ClipForge browser-based video clipping demonstration."""
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import shutil
@@ -9,6 +10,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -57,9 +59,30 @@ def worker():
             folder = ROOT / key
             if job["mode"] == "live":
                 update(key, status="processing", progress=8, message="Connecting to live stream")
-                source = capture_live(job["url"], folder,
-                                      lambda progress, message: update(key, progress=progress, message=message),
-                                      seconds=job.get("capture_seconds", 120))
+                try:
+                    source = capture_live(
+                        job["url"], folder,
+                        lambda progress, message: update(key, progress=progress, message=message),
+                        seconds=job.get("capture_seconds", 120)
+                    )
+                except LiveError as stream_error:
+                    if not job.get("try_replay_on_live_failure"):
+                        raise
+                    # A YouTube /live/ URL may refer to an ended broadcast.
+                    # If live capture fails, try its accessible VOD replay.
+                    logging.warning("Live capture unavailable for job %s: %s", key, stream_error)
+                    update(key, progress=9, message="Live capture unavailable; checking for a video replay")
+                    try:
+                        source = acquire_video(
+                            job["url"], folder,
+                            lambda progress, message: update(key, progress=progress, message=message)
+                        )
+                    except ClipError as replay_error:
+                        raise ClipError(
+                            "This YouTube stream could not be accessed for live capture or replay. "
+                            "It may be offline, restricted, or unavailable from this server. "
+                            "Try a supported live feed or upload an MP4 you can process."
+                        ) from replay_error
             elif job["mode"] == "youtube":
                 update(key, status="processing", progress=8, message="Connecting to YouTube and checking video availability")
                 source = acquire_video(job["url"], folder,
@@ -76,8 +99,10 @@ def worker():
             update(key, status="done", progress=100, message="Clips ready!", clips=clips)
             source.unlink(missing_ok=True)
         except (ClipError, LiveError) as exc:
+            logging.warning("ClipForge job %s failed: %s", key, exc, exc_info=True)
             update(key, status="error", message=str(exc), progress=0)
         except Exception:
+            logging.exception("Unexpected ClipForge failure for job %s", key)
             update(key, status="error", message="Processing failed. Try a shorter MP4 video.", progress=0)
         finally:
             Q.task_done()
@@ -142,8 +167,18 @@ def youtube_job(payload: URLJob):
         clean = youtube_video_url(payload.url)
     except ClipError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    key = new_job("youtube", url=clean, quality=validate_quality(payload.quality),
-                  analysis_mode=validate_analysis_mode(payload.analysis_mode))
+    # /live/<video-id> is an active stream or its later replay, not just a VOD.
+    # Direct it to the live recorder first, then try replay if recording fails.
+    path = urlparse(payload.url.strip()).path.rstrip("/")
+    live_link = path.startswith("/live/") and path.count("/") == 2
+    key = new_job(
+        "live" if live_link else "youtube",
+        url=clean,
+        capture_seconds=120,
+        try_replay_on_live_failure=live_link,
+        quality=validate_quality(payload.quality),
+        analysis_mode=validate_analysis_mode(payload.analysis_mode)
+    )
     Q.put_nowait(key)
     return {"job_id": key}
 
