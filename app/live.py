@@ -3,6 +3,7 @@
 Streamlink captures only a bounded live interval. A live broadcast is not a VOD:
 segments prior to starting the capture are not guaranteed to be available.
 """
+import logging
 from pathlib import Path
 from urllib.parse import urlparse
 import re
@@ -64,9 +65,20 @@ def capture_live(raw: str, folder: Path, on_progress=None, seconds=120) -> Path:
                 pct = min(29, 8 + int(elapsed / (seconds + 20) * 21))
                 on_progress(pct, f"Recording live stream: {int(elapsed)}s elapsed (up to {seconds}s)")
             time.sleep(2)
-        err = (proc.stderr.read(1800) if proc.stderr else b"").decode("utf-8", errors="replace")
+        err = (proc.stderr.read(4000) if proc.stderr else b"").decode("utf-8", errors="replace").strip()
         if proc.returncode != 0 or not target.exists() or target.stat().st_size < 100_000:
-            raise LiveError("Live capture failed. The stream may be offline, restricted or unsupported by this server.")
+            logging.warning("Live stream capture failed: exit=%s, bytes=%s, detail=%s",
+                            proc.returncode,
+                            target.stat().st_size if target.exists() else 0,
+                            err[-1600:].replace("\\n", " "))
+            lower = err.lower()
+            if "no plugin can handle" in lower:
+                raise LiveError("This live URL is not supported by the stream recorder.")
+            if "no playable streams" in lower or "no streams found" in lower:
+                raise LiveError("The server could not find a playable stream for this broadcast.")
+            if "403" in lower or "forbidden" in lower or "access denied" in lower:
+                raise LiveError("The live video is playing in your browser but its media is restricted to this server (HTTP 403).")
+            raise LiveError("Live capture failed on the server. Check the latest Render logs for the recorder's actual error.")
         from .processor import probe, ClipError
         try:
             probe(target)
