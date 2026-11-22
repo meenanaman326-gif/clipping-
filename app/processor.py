@@ -97,12 +97,28 @@ def acquire_video(url, folder):
     return path
 
 
-def highlight_windows(video, duration):
+def highlight_windows(video, duration, mode='fast'):
     """Fast, CPU-only heuristic: energetic changes and varied sound, not semantic understanding."""
     length = min(CLIP_LENGTH, max(8, int(duration)))
     target_clips = min(max(1, CLIP_COUNT), max(1, math.ceil(duration / 95)))
     if duration < length + 4:
         return [(0., length, 0.)]
+    # NeonClipping MIT-licensed multimodal activity ranker.
+    # Fast = audio jump + 2-4 kHz voice activity; Deep = also optical flow and hard cuts.
+    try:
+        from .neon_highlights import rank
+        neon = rank(str(video), duration, count=target_clips, length=length,
+                    motion_on=(mode == "deep"))
+        chosen = [
+            (float(clip["start"]), float(clip["end"]) - float(clip["start"]),
+             float(clip.get("score", 0)))
+            for clip in neon if float(clip["end"]) > float(clip["start"])
+        ]
+        if chosen:
+            return chosen
+    except Exception as exc:
+        # Keep a functioning fallback for unusual source codecs and missing audio.
+        print("Neon highlight ranker unavailable; using fallback:", repr(exc), flush=True)
     sample_rate = 2000
     candidates = []
     try:
@@ -182,10 +198,10 @@ def render_clip(video, start, seconds, target, quality="balanced"):
         raise ClipError("Video rendering failed. Try an MP4 with H.264 video.")
 
 
-def process_video(path, folder, progress, on_clip=None, on_plan=None, quality="balanced"):
-    progress(35, "Finding energetic moments and sound changes")
+def process_video(path, folder, progress, on_clip=None, on_plan=None, quality="balanced", mode="fast"):
+    progress(35, "Scanning audio and scene activity" if mode == "deep" else "Scanning audio peaks and vocal reactions")
     duration = probe(path)
-    windows = highlight_windows(path, duration)
+    windows = highlight_windows(path, duration, mode=mode)
     if on_plan:
         on_plan(len(windows))
     clips = []
