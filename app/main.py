@@ -53,13 +53,15 @@ def worker():
         try:
             with LOCK:
                 job = dict(JOBS[key])
-            update(key, status="processing", progress=8, message="Preparing video")
             folder = ROOT / key
             if job["mode"] == "youtube":
-                source = acquire_video(job["url"], folder)
+                update(key, status="processing", progress=8, message="Connecting to YouTube and checking video availability")
+                source = acquire_video(job["url"], folder,
+                                       lambda progress, message: update(key, progress=progress, message=message))
             else:
+                update(key, status="processing", progress=14, message="Checking uploaded video")
                 source = folder / job["source_name"]
-            update(key, progress=30)
+            update(key, progress=30, message="Video ready for highlight analysis")
             clips = process_video(source, folder, lambda progress, message: update(key, progress=progress, message=message),
                                   lambda clip: append_clip(key, clip),
                                   lambda count: update(key, planned_clips=count),
